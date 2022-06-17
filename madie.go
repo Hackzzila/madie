@@ -21,6 +21,7 @@ const ChannelNameTotalNumBytesPerLine = ChannelNameNumBytesPerLine + ChannelName
 type Command uint16
 
 const TCP_NOP Command = 0x0000
+// The AMP1-16-M uses 0x00000017 and shares a similar looking protocol
 const TCP_DISCONNECT Command = 0x0004
 const TCP_ACK Command = 0x0006
 const TCP_RESET_UNIT Command = 0x000A
