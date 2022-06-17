@@ -22,7 +22,7 @@ type Command uint16
 
 const TCP_NOP Command = 0x0000
 const TCP_DISCONNECT Command = 0x0004
-const TCP_ACK Command= 0x0006
+const TCP_ACK Command = 0x0006
 const TCP_RESET_UNIT Command = 0x000A
 const TCP_NAK Command = 0x0015
 const TCP_GET_MADI_CHANNEL_NAMES Command = 0x1000
@@ -33,7 +33,7 @@ type ChannelNames struct {
 }
 
 func (c *ChannelNames) IntoRaw() RawChannelNames {
-	raw := RawChannelNames {}
+	raw := RawChannelNames{}
 	for i, lines := range c.channelName {
 		for j, name := range lines {
 			copy(raw.channelName[i][j][:], []uint8(name[0:ChannelNameLength]))
@@ -48,7 +48,7 @@ type RawChannelNames struct {
 }
 
 func (c *RawChannelNames) IntoChannelNames() ChannelNames {
-	out := ChannelNames {}
+	out := ChannelNames{}
 	for i, lines := range c.channelName {
 		for j, name := range lines {
 			len := bytes.IndexByte(name[:], 0)
@@ -71,7 +71,7 @@ func NewConn(host string) (Conn, error) {
 		return Conn{}, err
 	}
 
-	return Conn { conn: tcpConn }, nil
+	return Conn{conn: tcpConn}, nil
 }
 
 func (c *Conn) Reset() error {
@@ -93,7 +93,7 @@ func (c *Conn) SetMadiChannelNames(channelNames ChannelNames) error {
 }
 
 func (c *Conn) GetMadiChannelNames() (ChannelNames, error) {
-	rawChannelNames := RawChannelNames {}
+	rawChannelNames := RawChannelNames{}
 
 	err := c.SendAndReceive(TCP_GET_MADI_CHANNEL_NAMES, rawChannelNames, nil)
 	if err != nil {
@@ -161,7 +161,7 @@ func (c *Conn) ReceiveMessage(data any) error {
 
 		body := make([]byte, numBytes)
 		_, err = io.ReadFull(c.conn, body)
-		if err  != nil {
+		if err != nil {
 			return err
 		}
 
@@ -174,7 +174,7 @@ func (c *Conn) ReceiveMessage(data any) error {
 			runningChecksum += uint32(v)
 		}
 
-		if runningChecksum + checksum != 0 {
+		if runningChecksum+checksum != 0 {
 			return fmt.Errorf("invalid checksum")
 		}
 
@@ -198,17 +198,17 @@ func ConstructMessage(command Command, body any) ([]byte, error) {
 
 	err := binary.Write(buf, binary.LittleEndian, command)
 	if err != nil {
-	 	return []byte{}, err
-	 }
+		return []byte{}, err
+	}
 
 	err = binary.Write(buf, binary.LittleEndian, uint16(0))
 	if err != nil {
-	 	return []byte{}, err
+		return []byte{}, err
 	}
 
 	err = binary.Write(buf, binary.LittleEndian, int32(0))
 	if err != nil {
-	 	return []byte{}, err
+		return []byte{}, err
 	}
 
 	if body != nil {
@@ -220,14 +220,14 @@ func ConstructMessage(command Command, body any) ([]byte, error) {
 
 	bytes := buf.Bytes()
 
-	binary.LittleEndian.PutUint16(bytes[2:], uint16(buf.Len() - 8))
+	binary.LittleEndian.PutUint16(bytes[2:], uint16(buf.Len()-8))
 
 	checksum := uint32(0)
 	for _, v := range bytes {
 		checksum += uint32(v)
 	}
 
-	binary.LittleEndian.PutUint32(bytes[4:], ^checksum + 1)
+	binary.LittleEndian.PutUint32(bytes[4:], ^checksum+1)
 
 	return bytes, nil
 }
