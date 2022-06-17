@@ -96,7 +96,7 @@ func (c *Conn) SetMadiChannelNames(channelNames ChannelNames) error {
 func (c *Conn) GetMadiChannelNames() (ChannelNames, error) {
 	rawChannelNames := RawChannelNames{}
 
-	err := c.SendAndReceive(TCP_GET_MADI_CHANNEL_NAMES, rawChannelNames, nil)
+	err := c.SendAndReceive(TCP_GET_MADI_CHANNEL_NAMES, nil, rawChannelNames)
 	if err != nil {
 		return ChannelNames{}, err
 	}
