@@ -125,11 +125,7 @@ func (c *Conn) SendMessage(command Command, body any) error {
 	}
 
 	_, err = c.conn.Write(msg)
-	if err != nil {
-		return err
-	}
-
-	return nil
+	return err
 }
 
 func (c *Conn) ReceiveMessage(data any) error {
