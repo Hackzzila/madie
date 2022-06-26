@@ -30,34 +30,22 @@ const TCP_GET_MADI_CHANNEL_NAMES Command = 0x1000
 const TCP_SET_MADI_CHANNEL_NAMES Command = 0x1001
 
 type ChannelNames struct {
-	channelName [NumInputChannels][ChannelNameNumLines]string
-}
-
-func (c *ChannelNames) IntoRaw() RawChannelNames {
-	raw := RawChannelNames{}
-	for i, lines := range c.channelName {
-		for j, name := range lines {
-			copy(raw.channelName[i][j][:], []uint8(name[0:ChannelNameLength]))
-		}
-	}
-
-	return raw
-}
-
-type RawChannelNames struct {
 	channelName [NumInputChannels][ChannelNameNumLines][ChannelNameTotalNumBytesPerLine]uint8
 }
 
-func (c *RawChannelNames) IntoChannelNames() ChannelNames {
-	out := ChannelNames{}
-	for i, lines := range c.channelName {
-		for j, name := range lines {
-			len := bytes.IndexByte(name[:], 0)
-			out.channelName[i][j] = string(name[:len])
-		}
-	}
+func (c *ChannelNames) GetChannelName(channel int) (string, string) {
+	len1 := bytes.IndexByte(c.channelName[channel][0][:], 0)
+	line1 := string(c.channelName[channel][0][:len1])
 
-	return out
+	len2 := bytes.IndexByte(c.channelName[channel][1][:], 0)
+	line2 := string(c.channelName[channel][1][:len2])
+
+	return line1, line2
+}
+
+func (c *ChannelNames) SetChannelName(channel int, line1 string, line2 string) {
+	copy(c.channelName[channel][0][:], []uint8(line1[0:ChannelNameLength]))
+	copy(c.channelName[channel][1][:], []uint8(line2[0:ChannelNameLength]))
 }
 
 type Conn struct {
@@ -85,7 +73,7 @@ func (c *Conn) Reset() error {
 }
 
 func (c *Conn) SetMadiChannelNames(channelNames ChannelNames) error {
-	err := c.SendAndReceive(TCP_SET_MADI_CHANNEL_NAMES, channelNames.IntoRaw(), nil)
+	err := c.SendAndReceive(TCP_SET_MADI_CHANNEL_NAMES, channelNames, nil)
 	if err != nil {
 		return err
 	}
@@ -94,9 +82,9 @@ func (c *Conn) SetMadiChannelNames(channelNames ChannelNames) error {
 }
 
 func (c *Conn) GetMadiChannelNames() (ChannelNames, error) {
-	rawChannelNames := RawChannelNames{}
+	channelNames := ChannelNames{}
 
-	err := c.SendAndReceive(TCP_GET_MADI_CHANNEL_NAMES, nil, rawChannelNames)
+	err := c.SendAndReceive(TCP_GET_MADI_CHANNEL_NAMES, nil, channelNames)
 	if err != nil {
 		return ChannelNames{}, err
 	}
@@ -106,7 +94,7 @@ func (c *Conn) GetMadiChannelNames() (ChannelNames, error) {
 		return ChannelNames{}, err
 	}
 
-	return rawChannelNames.IntoChannelNames(), nil
+	return channelNames, nil
 }
 
 func (c *Conn) SendAndReceive(command Command, requestBody any, responseBody any) error {
