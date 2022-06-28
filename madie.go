@@ -44,7 +44,7 @@ func (c *ChannelNames) GetChannelName(channel int) (string, string) {
 }
 
 func TrimString(str string) [ChannelNameTotalNumBytesPerLine]uint8 {
-	out := [ChannelNameTotalNumBytesPerLine]uint8{0, 0, 0, 0, 0, 0, 0, 0, 0}
+	out := [ChannelNameTotalNumBytesPerLine]uint8{}
 
 	copy(out[:], []uint8(str[0:uint8(math.Min(ChannelNameLength, float64(len(str))))]))
 
@@ -264,7 +264,7 @@ func main() {
 		panic(err)
 	}
 
-	names.SetChannelName(6, "HELLO", "NICK")
+	names.SetChannelName(6, "1", "1")
 
 	err = conn.SetMadiChannelNames(names)
 	if err != nil {
