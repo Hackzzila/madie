@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"time"
 )
@@ -21,31 +22,41 @@ const ChannelNameTotalNumBytesPerLine = ChannelNameNumBytesPerLine + ChannelName
 type Command uint16
 
 const TCP_NOP Command = 0x0000
-// The AMP1-16-M uses 0x00000017 and shares a similar looking protocol
-const TCP_DISCONNECT Command = 0x0004
 const TCP_ACK Command = 0x0006
 const TCP_RESET_UNIT Command = 0x000A
 const TCP_NAK Command = 0x0015
+const TCP_DISCONNECT Command = 0x0017
 const TCP_GET_MADI_CHANNEL_NAMES Command = 0x1000
 const TCP_SET_MADI_CHANNEL_NAMES Command = 0x1001
 
 type ChannelNames struct {
-	channelName [NumInputChannels][ChannelNameNumLines][ChannelNameTotalNumBytesPerLine]uint8
+	ChannelName [NumInputChannels][ChannelNameNumLines][ChannelNameTotalNumBytesPerLine]uint8
 }
 
 func (c *ChannelNames) GetChannelName(channel int) (string, string) {
-	len1 := bytes.IndexByte(c.channelName[channel][0][:], 0)
-	line1 := string(c.channelName[channel][0][:len1])
+	len1 := bytes.IndexByte(c.ChannelName[channel][0][:], 0)
+	line1 := string(c.ChannelName[channel][0][:len1])
 
-	len2 := bytes.IndexByte(c.channelName[channel][1][:], 0)
-	line2 := string(c.channelName[channel][1][:len2])
+	len2 := bytes.IndexByte(c.ChannelName[channel][1][:], 0)
+	line2 := string(c.ChannelName[channel][1][:len2])
 
 	return line1, line2
 }
 
+func TrimString(str string) [ChannelNameTotalNumBytesPerLine]uint8 {
+	out := [ChannelNameTotalNumBytesPerLine]uint8{0, 0, 0, 0, 0, 0, 0, 0, 0}
+
+	copy(out[:], []uint8(str[0:uint8(math.Min(ChannelNameLength, float64(len(str))))]))
+
+	return out
+}
+
 func (c *ChannelNames) SetChannelName(channel int, line1 string, line2 string) {
-	copy(c.channelName[channel][0][:], []uint8(line1[0:ChannelNameLength]))
-	copy(c.channelName[channel][1][:], []uint8(line2[0:ChannelNameLength]))
+	line1Trimmed := TrimString(line1)
+	copy(c.ChannelName[channel][0][:], line1Trimmed[:])
+
+	line2Trimmed := TrimString(line2)
+	copy(c.ChannelName[channel][1][:], line2Trimmed[:])
 }
 
 type Conn struct {
@@ -64,69 +75,48 @@ func NewConn(host string) (Conn, error) {
 }
 
 func (c *Conn) Reset() error {
-	err := c.SendAndReceive(TCP_RESET_UNIT, nil, nil)
-	if err != nil {
-		return err
-	}
-
-	return c.SendAndReceive(TCP_DISCONNECT, nil, nil)
+	return c.SendMessage(TCP_RESET_UNIT, nil)
+	// return c.SendCommand(TCP_RESET_UNIT, nil)
 }
 
 func (c *Conn) SetMadiChannelNames(channelNames ChannelNames) error {
-	err := c.SendAndReceive(TCP_SET_MADI_CHANNEL_NAMES, channelNames, nil)
+	err := c.SendCommand(TCP_SET_MADI_CHANNEL_NAMES, channelNames)
 	if err != nil {
 		return err
 	}
 
-	return c.SendAndReceive(TCP_DISCONNECT, nil, nil)
+	return c.SendCommand(TCP_DISCONNECT, nil)
 }
 
 func (c *Conn) GetMadiChannelNames() (ChannelNames, error) {
 	channelNames := ChannelNames{}
 
-	err := c.SendAndReceive(TCP_GET_MADI_CHANNEL_NAMES, nil, channelNames)
+	err := c.SendMessage(TCP_GET_MADI_CHANNEL_NAMES, nil)
 	if err != nil {
 		return ChannelNames{}, err
 	}
 
-	err = c.SendAndReceive(TCP_DISCONNECT, nil, nil)
+	err = c.conn.SetReadDeadline(time.Now().Add(time.Second * 3))
 	if err != nil {
 		return ChannelNames{}, err
 	}
 
-	return channelNames, nil
-}
-
-func (c *Conn) SendAndReceive(command Command, requestBody any, responseBody any) error {
-	err := c.SendMessage(command, requestBody)
+	initialCommand := [1]byte{}
+	_, err = io.ReadFull(c.conn, initialCommand[:])
 	if err != nil {
-		return err
+		return ChannelNames{}, err
 	}
 
-	return c.ReceiveMessage(responseBody)
-}
-
-func (c *Conn) SendMessage(command Command, body any) error {
-	msg, err := ConstructMessage(command, body)
-	if err != nil {
-		return err
-	}
-
-	_, err = c.conn.Write(msg)
-	return err
-}
-
-func (c *Conn) ReceiveMessage(data any) error {
-	err := c.conn.SetReadDeadline(time.Now().Add(time.Second * 3))
-	if err != nil {
-		return err
+	if initialCommand[0] != 0 {
+		return ChannelNames{}, fmt.Errorf("unknown response %#X", initialCommand[0])
 	}
 
 	header := [8]byte{}
+	header[0] = initialCommand[0]
 
-	_, err = io.ReadFull(c.conn, header[:])
+	_, err = io.ReadFull(c.conn, header[1:])
 	if err != nil {
-		return err
+		return ChannelNames{}, err
 	}
 
 	command := binary.LittleEndian.Uint16(header[0:])
@@ -134,20 +124,17 @@ func (c *Conn) ReceiveMessage(data any) error {
 	checksum := binary.LittleEndian.Uint32(header[4:])
 
 	switch command {
-	case uint16(TCP_ACK):
-		dataSize := 0
-		if data != nil {
-			dataSize = binary.Size(data)
-		}
+	case uint16(TCP_GET_MADI_CHANNEL_NAMES):
+		dataSize := binary.Size(channelNames)
 
 		if int(numBytes) != dataSize {
-			return fmt.Errorf("expected body length of %d, but got %d", dataSize, numBytes)
+			return ChannelNames{}, fmt.Errorf("expected body length of %d, but got %d", dataSize, numBytes)
 		}
 
 		body := make([]byte, numBytes)
 		_, err = io.ReadFull(c.conn, body)
 		if err != nil {
-			return err
+			return ChannelNames{}, err
 		}
 
 		runningChecksum := uint32(0)
@@ -160,17 +147,53 @@ func (c *Conn) ReceiveMessage(data any) error {
 		}
 
 		if runningChecksum+checksum != 0 {
-			return fmt.Errorf("invalid checksum")
+			return ChannelNames{}, fmt.Errorf("invalid checksum")
 		}
 
-		if dataSize != 0 {
-			bodyReader := bytes.NewReader(body)
-			return binary.Read(bodyReader, binary.LittleEndian, data)
+		bodyReader := bytes.NewReader(body)
+		err = binary.Read(bodyReader, binary.LittleEndian, &channelNames)
+		if err != nil {
+			return ChannelNames{}, err
 		}
 
-		return nil
+		err = c.SendCommand(TCP_DISCONNECT, nil)
+		if err != nil {
+			return ChannelNames{}, err
+		}
+
+		return channelNames, nil
 
 	case uint16(TCP_NAK):
+		return ChannelNames{}, fmt.Errorf("received TCP_NAK")
+
+	default:
+		return ChannelNames{}, fmt.Errorf("unknown response %#X", command)
+	}
+}
+
+func (c *Conn) SendCommand(command Command, body any) error {
+	err := c.SendMessage(command, body)
+	if err != nil {
+		return err
+	}
+
+	err = c.conn.SetReadDeadline(time.Now().Add(time.Second * 3))
+	if err != nil {
+		return err
+	}
+
+	header := [1]byte{}
+
+	_, err = io.ReadFull(c.conn, header[:])
+	if err != nil {
+		return err
+	}
+
+	switch header[0] {
+	case byte(TCP_ACK):
+		return nil
+
+	case byte(TCP_NAK):
 		return fmt.Errorf("received TCP_NAK")
 
 	default:
@@ -178,7 +201,22 @@ func (c *Conn) ReceiveMessage(data any) error {
 	}
 }
 
+func (c *Conn) SendMessage(command Command, body any) error {
+	msg, err := ConstructMessage(command, body)
+	if err != nil {
+		return err
+	}
+
+	_, err = c.conn.Write(msg)
+	return err
+}
+
 func ConstructMessage(command Command, body any) ([]byte, error) {
+	bodySize := 0
+	if body != nil {
+		bodySize = binary.Size(body)
+	}
+
 	buf := new(bytes.Buffer)
 
 	err := binary.Write(buf, binary.LittleEndian, command)
@@ -186,7 +224,7 @@ func ConstructMessage(command Command, body any) ([]byte, error) {
 		return []byte{}, err
 	}
 
-	err = binary.Write(buf, binary.LittleEndian, uint16(0))
+	err = binary.Write(buf, binary.LittleEndian, uint16(bodySize))
 	if err != nil {
 		return []byte{}, err
 	}
@@ -205,8 +243,6 @@ func ConstructMessage(command Command, body any) ([]byte, error) {
 
 	bytes := buf.Bytes()
 
-	binary.LittleEndian.PutUint16(bytes[2:], uint16(buf.Len()-8))
-
 	checksum := uint32(0)
 	for _, v := range bytes {
 		checksum += uint32(v)
@@ -218,10 +254,29 @@ func ConstructMessage(command Command, body any) ([]byte, error) {
 }
 
 func main() {
-	conn, err := NewConn("127.0.0.1")
+	conn, err := NewConn("10.51.62.211")
 	if err != nil {
-		fmt.Println(err)
+		panic(err)
 	}
+
+	names, err := conn.GetMadiChannelNames()
+	if err != nil {
+		panic(err)
+	}
+
+	names.SetChannelName(6, "HELLO", "NICK")
+
+	err = conn.SetMadiChannelNames(names)
+	if err != nil {
+		panic(err)
+	}
+
+	line1, line2 := names.GetChannelName(2)
+
+	fmt.Println(line1)
+	fmt.Println(line2)
+
+	time.Sleep(time.Second)
 
 	err = conn.Reset()
 	if err != nil {
